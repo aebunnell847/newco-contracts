@@ -1,0 +1,178 @@
+{
+  "contractName": "ConsentRegistry",
+  "abi": [
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "attestationId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "subject",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "grantee",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "dataCategory",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "expiry",
+          "type": "uint64"
+        }
+      ],
+      "name": "AccessGranted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "attestationId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "subject",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "revokedAt",
+          "type": "uint64"
+        }
+      ],
+      "name": "AccessRevoked",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "attestations",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "subject",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "grantee",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "dataCategory",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "expiry",
+          "type": "uint64"
+        },
+        {
+          "internalType": "bool",
+          "name": "revoked",
+          "type": "bool"
+        },
+        {
+          "internalType": "uint64",
+          "name": "grantedAt",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "revokedAt",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "grantee",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "dataCategory",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint64",
+          "name": "expiry",
+          "type": "uint64"
+        }
+      ],
+      "name": "grantAccess",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "attestationId",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "attestationId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "isAccessActive",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "attestationId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "revoke",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x6080604052348015600e575f5ffd5b506106d68061001c5f395ff3fe608060405234801561000f575f5ffd5b506004361061004a575f3560e01c80633fb717331461004e578063940992a314610076578063a5240e3014610130578063b75c7dc614610151575b5f5ffd5b61006161005c36600461060f565b610166565b60405190151581526020015b60405180910390f35b6100e161008436600461060f565b5f6020819052908152604090208054600182015460028301546003909301546001600160a01b0392831693919092169167ffffffffffffffff8082169160ff600160401b82041691600160481b8204811691600160881b90041687565b604080516001600160a01b0398891681529790961660208801529486019390935267ffffffffffffffff91821660608601521515608085015290811660a08401521660c082015260e00161006d565b61014361013e366004610626565b6101cc565b60405190815260200161006d565b61016461015f36600461060f565b61046a565b005b5f81815260208190526040812080546001600160a01b031661018a57505f92915050565b6003810154600160401b900460ff16156101a657505f92915050565b600381015467ffffffffffffffff1642106101c357505f92915050565b50600192915050565b5f6001600160a01b0384166102285760405162461bcd60e51b815260206004820152601e60248201527f6772616e7465652063616e6e6f74206265207a65726f2061646472657373000060448201526064015b60405180910390fd5b428267ffffffffffffffff16116102815760405162461bcd60e51b815260206004820152601c60248201527f657870697279206d75737420626520696e207468652066757475726500000000604482015260640161021f565b335f9081526001602052604081208054908261029c8361067c565b909155506040516bffffffffffffffffffffffff1933606090811b8216602084015288901b166034820152604881018690526001600160c01b031960c086901b1660688201526070810182905290915060900160408051601f19818403018152828252805160209182012060e084018352338085526001600160a01b038a81168685018181528787018c815267ffffffffffffffff808d1660608b019081525f60808c0181815242841660a08e0190815260c08e018381528b84529b839052918c90209c518d549089166001600160a01b0319918216178e55955160018e01805491909916961695909517909655915160028b01559051600390990180549251945197518216600160881b0267ffffffffffffffff60881b19988316600160481b029890981678ffffffffffffffffffffffffffffffff00000000000000000019951515600160401b0268ffffffffffffffffff199094169a90921699909917919091179290921691909117939093179094559151919450919084907f50cd9fad5122565c6b5a714e169452d4fbd509de767af61159da36dfdfabf05f9061045a908990899091825267ffffffffffffffff16602082015260400190565b60405180910390a4509392505050565b5f81815260208190526040902080546001600160a01b03166104ce5760405162461bcd60e51b815260206004820152601a60248201527f6174746573746174696f6e20646f6573206e6f74206578697374000000000000604482015260640161021f565b80546001600160a01b0316331461053b5760405162461bcd60e51b815260206004820152602b60248201527f6f6e6c7920746865207375626a6563742063616e207265766f6b65207468656960448201526a1c881bdddb8819dc985b9d60aa1b606482015260840161021f565b6003810154600160401b900460ff16156105895760405162461bcd60e51b815260206004820152600f60248201526e185b1c9958591e481c995d9bdad959608a1b604482015260640161021f565b60038101805467ffffffffffffffff428116600160881b90810278ffffffffffffffff0000000000000000ff00000000000000001990931692909217600160401b1792839055604051919092049091168152339083907e7be85334d005a9394ddfc63415530a7bc72b71a94565a5aad046c76bba3ee39060200160405180910390a35050565b5f6020828403121561061f575f5ffd5b5035919050565b5f5f5f60608486031215610638575f5ffd5b83356001600160a01b038116811461064e575f5ffd5b925060208401359150604084013567ffffffffffffffff81168114610671575f5ffd5b809150509250925092565b5f6001820161069957634e487b7160e01b5f52601160045260245ffd5b506001019056fea2646970667358221220db8cfa3e9eb301772c3f17bf3feda9523c62910d5274233be6b6a63120d3078b64736f6c63430008260033"
+}
