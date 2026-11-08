@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests against a local chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Start local Hardhat node
+        run: |
+          npx hardhat node > hardhat-node.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf -X POST -H 'Content-Type: application/json' \
+                 --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' \
+                 http://127.0.0.1:8545 > /dev/null; then
+              echo "node is up"; exit 0
+            fi
+            sleep 1
+          done
+          echo "Hardhat node did not start"; cat hardhat-node.log; exit 1
+
+      # Compiles (solc npm package) then runs every test over JSON-RPC.
+      - run: npm test
+
+      # The compiled ABI/bytecode is committed and vendored into
+      # newco-payroll, so a contract change that isn't recompiled and
+      # committed must fail here rather than drift silently.
+      - name: Committed artifacts match a fresh compile
+        run: git diff --exit-code -- artifacts-custom/
+
+  slither:
+    name: Slither static analysis
+    runs-on: ubuntu-latest
+    env:
+      # Keep in step with the solc npm package version compile.js uses.
+      SOLC_VERSION: 0.8.38
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install slither-analyzer==0.11.6 solc-select==1.2.0
+
+      - run: |
+          solc-select install "$SOLC_VERSION"
+          solc-select use "$SOLC_VERSION"
+
+      # Fails on any medium- or high-impact finding. Low/informational
+      # results (e.g. intended block.timestamp use for consent expiry)
+      # are printed for review but don't fail the build.
+      - run: slither contracts/ --compile-force-framework solc --fail-medium
