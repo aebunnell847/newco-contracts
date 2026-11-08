@@ -38,10 +38,16 @@ npm run node        # in one terminal - starts a local chain, leave it running
 npm test            # in another terminal - compiles + runs all tests
 ```
 
-12 tests across both contracts: grants, revocation, expiry, access
+14 tests across both contracts: grants, revocation, expiry, access
 control on who can call what, and all three reconciliation outcomes
 (Matched, AmountMismatch, LateDeposit) - including an explicit assertion
 that a mismatch never reverts or alters the originally recorded amount.
+
+Every ledger entry stores two times: the one the caller claims
+(`withheldAt` / `remittedAt`, which drives the LateDeposit flag) and
+`recordedAt`, the block timestamp when the entry landed, which the
+caller can't choose. The flag logic is unchanged; the second time
+just makes a backdated claim visible to an auditor.
 
 ## Deploying
 
