@@ -89,6 +89,21 @@ To deploy to a real public testnet instead of your own machine, see
 two things only you can provide (an RPC endpoint and a funded testnet
 wallet), spelled out there.
 
+## What the ledger makes public, on purpose
+
+Everything a contract stores or emits is readable by anyone, forever.
+For `ReconciliationLedger` that is deliberate. Each entry's amounts and
+times are public so anyone can spot-check that what payroll withheld
+matches what the custodian received, without having to trust either
+side's word.
+
+What is **not** public is who an entry belongs to. `employeeId` is a
+keyed hash that only the payroll system can compute (see
+`newco-payroll`'s README, "Employee IDs on the public ledger"), so a
+guessed employee number can't be matched to an entry. Personal data
+never goes on-chain. If a future change would put a name, an SSN, or an
+unkeyed hash of one into a contract call or event, treat that as a bug.
+
 ## Who can write the ledger, and handing a role off
 
 `ReconciliationLedger` has two writers: the **payroll system** (records
