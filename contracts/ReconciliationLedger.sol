@@ -33,24 +33,31 @@ contract ReconciliationLedger {
         LateDeposit // 5 - amounts match, but the gap between withholding and remittance exceeded the window
     }
 
+    // `withheldAt` / `remittedAt` are what the CALLER says happened, and they
+    // drive the LateDeposit flag below. `recordedAt` is block.timestamp when
+    // the entry landed - a time the chain itself attests to, which the caller
+    // can't choose. Recording both makes a backdated (or forward-dated) claim
+    // visible to anyone auditing the ledger. Neither one ever blocks anything.
     struct Contribution {
         uint256 amountCents;
         uint64 withheldAt;
         bool recorded;
+        uint64 recordedAt;
     }
 
     struct Remittance {
         uint256 amountCents;
         uint64 remittedAt;
         bool recorded;
+        uint64 recordedAt;
     }
 
     mapping(bytes32 => Contribution) public contributions;
     mapping(bytes32 => Remittance) public remittances;
     mapping(bytes32 => Status) private _reconciliationStatus;
 
-    event ContributionRecorded(bytes32 indexed key, bytes32 employeeId, bytes32 payPeriod, uint256 amountCents, uint64 withheldAt);
-    event RemittanceRecorded(bytes32 indexed key, bytes32 employeeId, bytes32 payPeriod, uint256 amountCents, uint64 remittedAt);
+    event ContributionRecorded(bytes32 indexed key, bytes32 employeeId, bytes32 payPeriod, uint256 amountCents, uint64 withheldAt, uint64 recordedAt);
+    event RemittanceRecorded(bytes32 indexed key, bytes32 employeeId, bytes32 payPeriod, uint256 amountCents, uint64 remittedAt, uint64 recordedAt);
     event ReconciliationMatched(bytes32 indexed key);
     event ReconciliationAmountMismatch(bytes32 indexed key, uint256 contributionAmountCents, uint256 remittanceAmountCents);
     event ReconciliationLateDeposit(bytes32 indexed key, uint256 delaySeconds);
@@ -87,8 +94,14 @@ contract ReconciliationLedger {
         bytes32 key = _key(employeeId, payPeriod);
         require(!contributions[key].recorded, "contribution already recorded for this employee/pay period");
 
-        contributions[key] = Contribution({amountCents: amountCents, withheldAt: withheldAt, recorded: true});
-        emit ContributionRecorded(key, employeeId, payPeriod, amountCents, withheldAt);
+        uint64 recordedAt = uint64(block.timestamp);
+        contributions[key] = Contribution({
+            amountCents: amountCents,
+            withheldAt: withheldAt,
+            recorded: true,
+            recordedAt: recordedAt
+        });
+        emit ContributionRecorded(key, employeeId, payPeriod, amountCents, withheldAt, recordedAt);
 
         _tryReconcile(key);
     }
@@ -104,8 +117,14 @@ contract ReconciliationLedger {
         bytes32 key = _key(employeeId, payPeriod);
         require(!remittances[key].recorded, "remittance already recorded for this employee/pay period");
 
-        remittances[key] = Remittance({amountCents: amountCents, remittedAt: remittedAt, recorded: true});
-        emit RemittanceRecorded(key, employeeId, payPeriod, amountCents, remittedAt);
+        uint64 recordedAt = uint64(block.timestamp);
+        remittances[key] = Remittance({
+            amountCents: amountCents,
+            remittedAt: remittedAt,
+            recorded: true,
+            recordedAt: recordedAt
+        });
+        emit RemittanceRecorded(key, employeeId, payPeriod, amountCents, remittedAt, recordedAt);
 
         _tryReconcile(key);
     }

@@ -102,6 +102,51 @@ describe("ReconciliationLedger", function () {
     const contractAsOutsider = contract.connect(outsider);
     await expectRevert(contractAsOutsider.recordRemittance(employeeId, payPeriod, 10_000, now));
   });
+
+  it("stores the chain's own block timestamp alongside each caller-supplied time", async function () {
+    const key = ethers.solidityPackedKeccak256(["bytes32", "bytes32"], [employeeId, payPeriod]);
+    const claimedWithheldAt = (await latestBlockTimestamp()) - 3600; // caller says an hour ago
+
+    const cReceipt = await (await contract.recordContribution(employeeId, payPeriod, 10_000, claimedWithheldAt)).wait();
+    const cBlock = await provider.getBlock(cReceipt.blockNumber);
+    const c = await contract.contributions(key);
+    expect(c.withheldAt).to.equal(BigInt(claimedWithheldAt));
+    expect(c.recordedAt).to.equal(BigInt(cBlock.timestamp));
+
+    const cEvent = cReceipt.logs.map((l) => contract.interface.parseLog(l)).find((e) => e.name === "ContributionRecorded");
+    expect(cEvent.args.recordedAt).to.equal(BigInt(cBlock.timestamp));
+
+    const rReceipt = await (await contract.connect(custodian).recordRemittance(employeeId, payPeriod, 10_000, claimedWithheldAt)).wait();
+    const rBlock = await provider.getBlock(rReceipt.blockNumber);
+    const r = await contract.remittances(key);
+    expect(r.recordedAt).to.equal(BigInt(rBlock.timestamp));
+
+    const rEvent = rReceipt.logs.map((l) => contract.interface.parseLog(l)).find((e) => e.name === "RemittanceRecorded");
+    expect(rEvent.args.recordedAt).to.equal(BigInt(rBlock.timestamp));
+  });
+
+  it("makes a backdated remittance visible without changing how it is flagged", async function () {
+    // Payroll withholds now; the custodian only records the remittance 10
+    // days later but CLAIMS it arrived 1 day after withholding.
+    const key = ethers.solidityPackedKeccak256(["bytes32", "bytes32"], [employeeId, payPeriod]);
+    const withheldAt = await latestBlockTimestamp();
+    await (await contract.recordContribution(employeeId, payPeriod, 10_000, withheldAt)).wait();
+
+    await provider.send("evm_increaseTime", [60 * 60 * 24 * 10]);
+    await provider.send("evm_mine", []);
+
+    const claimedRemittedAt = withheldAt + 60 * 60 * 24;
+    await (await contract.connect(custodian).recordRemittance(employeeId, payPeriod, 10_000, claimedRemittedAt)).wait();
+
+    // Flag logic is unchanged and still uses the caller's claimed times:
+    // this is Matched, exactly as before. The ledger records; it doesn't judge.
+    expect(await contract.status(employeeId, payPeriod)).to.equal(3n); // Matched
+
+    // ...but the chain-attested time exposes the gap for a human to review.
+    const r = await contract.remittances(key);
+    const gapDays = Number(r.recordedAt - r.remittedAt) / 86400;
+    expect(gapDays).to.be.greaterThan(8);
+  });
 });
 
 // We're running tests via plain mocha (not `npx hardhat test`), so
