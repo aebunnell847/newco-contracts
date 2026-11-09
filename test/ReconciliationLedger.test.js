@@ -14,6 +14,13 @@ const DEFAULT_TEST_KEYS = [
   "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
 ];
 
+const CALENDAR = 0;
+const BUSINESS = 1;
+const DAY = 86400;
+
+// Unix day number -> seconds at UTC midnight. 2026-11-09 is a Monday.
+const utc = (isoDate, hh = 12) => Date.parse(isoDate + "T00:00:00Z") / 1000 + hh * 3600;
+
 describe("ReconciliationLedger", function () {
   let provider, payroll, custodian, outsider, contract;
   const employeeId = ethers.keccak256(ethers.toUtf8Bytes("emp-001"));
@@ -26,7 +33,8 @@ describe("ReconciliationLedger", function () {
     [payroll, custodian, outsider] = DEFAULT_TEST_KEYS.map((k) => new ethers.Wallet(k, provider));
 
     const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, payroll);
-    contract = await factory.deploy(payroll.address, custodian.address);
+    // Calendar days, 7-day window: the original default behavior.
+    contract = await factory.deploy(payroll.address, custodian.address, CALENDAR, 7);
     await contract.waitForDeployment();
   });
 
@@ -146,6 +154,94 @@ describe("ReconciliationLedger", function () {
     const r = await contract.remittances(key);
     const gapDays = Number(r.recordedAt - r.remittedAt) / 86400;
     expect(gapDays).to.be.greaterThan(8);
+  });
+});
+
+describe("ReconciliationLedger deposit window settings", function () {
+  let provider, payroll, custodian;
+  const employeeId = ethers.keccak256(ethers.toUtf8Bytes("emp-window"));
+  let periodCounter = 0;
+
+  before(async function () {
+    provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545", undefined, { cacheTimeout: -1 });
+    [payroll, custodian] = DEFAULT_TEST_KEYS.map((k) => new ethers.Wallet(k, provider));
+  });
+
+  async function deploy(mode, days) {
+    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, payroll);
+    const c = await factory.deploy(payroll.address, custodian.address, mode, days);
+    await c.waitForDeployment();
+    return c;
+  }
+
+  // Records a contribution at `withheldAt` and a matching remittance at
+  // `remittedAt`, returns the resulting status (3 Matched, 5 LateDeposit).
+  async function statusFor(c, withheldAt, remittedAt) {
+    const period = ethers.keccak256(ethers.toUtf8Bytes("p-" + periodCounter++));
+    await (await c.recordContribution(employeeId, period, 100, withheldAt)).wait();
+    await (await c.connect(custodian).recordRemittance(employeeId, period, 100, remittedAt)).wait();
+    return c.status(employeeId, period);
+  }
+
+  it("exposes its mode and window length, fixed at deployment", async function () {
+    const c = await deploy(BUSINESS, 7);
+    expect(await c.DEPOSIT_WINDOW_MODE()).to.equal(BigInt(BUSINESS));
+    expect(await c.TIMELY_DEPOSIT_WINDOW_DAYS()).to.equal(7n);
+  });
+
+  it("refuses a window longer than the maximum at deployment", async function () {
+    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, payroll);
+    await expectRevert(factory.deploy(payroll.address, custodian.address, CALENDAR, 61));
+  });
+
+  it("calendar mode: deadline is exactly N x 24h after withholding", async function () {
+    const c = await deploy(CALENDAR, 7);
+    const w = utc("2026-11-13"); // a Friday
+    expect(await c.depositDeadline(w)).to.equal(BigInt(w + 7 * DAY));
+    expect(await statusFor(c, w, w + 7 * DAY)).to.equal(3n); // Matched, right at the deadline
+    expect(await statusFor(c, w, w + 7 * DAY + 1)).to.equal(5n); // LateDeposit, one second over
+  });
+
+  it("calendar mode with a 0-day window flags any delay (instant settlement)", async function () {
+    const c = await deploy(CALENDAR, 0);
+    const w = utc("2026-11-14"); // Saturday - calendar mode doesn't care
+    expect(await statusFor(c, w, w)).to.equal(3n);
+    expect(await statusFor(c, w, w + 1)).to.equal(5n);
+  });
+
+  it("business mode skips weekends: 7 business days from Friday is the Tuesday 11 days later", async function () {
+    const c = await deploy(BUSINESS, 7);
+    const w = utc("2026-11-13"); // Friday
+    // Mon16 Tue17 Wed18 Thu19 Fri20 Mon23 Tue24 -> deadline end of Tue 2026-11-24 UTC
+    expect(await c.depositDeadline(w)).to.equal(BigInt(utc("2026-11-25", 0) - 1));
+    expect(await statusFor(c, w, utc("2026-11-24", 23))).to.equal(3n); // Matched
+    expect(await statusFor(c, w, utc("2026-11-25", 0))).to.equal(5n); // LateDeposit
+  });
+
+  it("business mode is more lenient than calendar mode across a weekend", async function () {
+    const w = utc("2026-11-13"); // Friday
+    const remitted = utc("2026-11-23"); // 10 calendar days later, the 6th business day
+    expect(await statusFor(await deploy(CALENDAR, 7), w, remitted)).to.equal(5n); // late by calendar
+    expect(await statusFor(await deploy(BUSINESS, 7), w, remitted)).to.equal(3n); // timely by business days
+  });
+
+  it("business mode counts from the next weekday when withholding happens on a weekend", async function () {
+    const c = await deploy(BUSINESS, 1);
+    // Withheld Saturday 2026-11-14 -> 1 business day later is Monday 2026-11-16
+    expect(await c.depositDeadline(utc("2026-11-14"))).to.equal(BigInt(utc("2026-11-17", 0) - 1));
+  });
+
+  it("business mode with a 0-day window means the same UTC day", async function () {
+    const c = await deploy(BUSINESS, 0);
+    expect(await c.depositDeadline(utc("2026-11-11", 9))).to.equal(BigInt(utc("2026-11-12", 0) - 1));
+  });
+
+  it("a late deposit is still only flagged, never reverted, in either mode", async function () {
+    for (const mode of [CALENDAR, BUSINESS]) {
+      const c = await deploy(mode, 1);
+      const w = utc("2026-11-10");
+      expect(await statusFor(c, w, w + 30 * DAY)).to.equal(5n); // recorded and flagged, no revert
+    }
   });
 });
 

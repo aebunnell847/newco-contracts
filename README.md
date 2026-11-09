@@ -38,9 +38,10 @@ npm run node        # in one terminal - starts a local chain, leave it running
 npm test            # in another terminal - compiles + runs all tests
 ```
 
-14 tests across both contracts: grants, revocation, expiry, access
+23 tests across both contracts: grants, revocation, expiry, access
 control on who can call what, and all three reconciliation outcomes
-(Matched, AmountMismatch, LateDeposit) - including an explicit assertion
+(Matched, AmountMismatch, LateDeposit) under both deposit-window modes -
+including an explicit assertion
 that a mismatch never reverts or alters the originally recorded amount.
 
 Every ledger entry stores two times: the one the caller claims
@@ -57,6 +58,32 @@ npm run deploy
 
 Deploys both contracts to whatever `NEWCO_RPC_URL` points at (defaults to
 the local node) and prints the addresses, ready to hand to `newco-payroll`.
+
+### Deposit window (fixed per ledger)
+
+`ReconciliationLedger` flags a remittance as `LateDeposit` when it lands
+after the plan's timely-deposit window. The window is set at deployment
+and can't be changed afterwards. Changing it means deploying a new
+ledger, because no admin is given power to alter the rules mid-stream.
+
+| Env var | Values | Default |
+|---|---|---|
+| `NEWCO_DEPOSIT_WINDOW_MODE` | `calendar` or `business` | `calendar` |
+| `NEWCO_DEPOSIT_WINDOW_DAYS` | `0`-`60` | `7` |
+
+- **calendar**: late if the remittance is more than N x 24 hours after
+  withholding. `calendar` with `0` flags any delay at all, which is the
+  setting for instant, every-day settlement once the industry supports
+  it.
+- **business**: N weekdays (Mon-Fri, by UTC date) after the withholding
+  date. Bank holidays are not excluded, so a holiday inside the window
+  makes the flag fire a day early. That means an extra human review,
+  never a missed late deposit.
+
+Which setting a plan should use is a compliance decision. For example,
+DOL's 7-business-day safe harbor (29 CFR 2510.3-102(a)(2)) only covers
+plans with fewer than 100 participants. Either way the ledger only
+flags; it never blocks a deposit.
 To deploy to a real public testnet instead of your own machine, see
 [`docs/DEPLOYING_TO_TESTNET.md`](docs/DEPLOYING_TO_TESTNET.md) - it needs
 two things only you can provide (an RPC endpoint and a funded testnet

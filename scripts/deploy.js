@@ -35,7 +35,23 @@ async function main() {
   console.log(`ConsentRegistry deployed at: ${await consentRegistry.getAddress()}`);
 
   const ledgerFactory = new ethers.ContractFactory(ledgerArtifact.abi, ledgerArtifact.bytecode, deployer);
-  const reconciliationLedger = await ledgerFactory.deploy(deployer.address, CUSTODIAN_ADDRESS);
+  // Deposit-window settings are fixed for the life of this ledger. Choose
+  // them per the plan's compliance determination (see README).
+  const WINDOW_MODE = (process.env.NEWCO_DEPOSIT_WINDOW_MODE || "calendar").toLowerCase();
+  if (WINDOW_MODE !== "calendar" && WINDOW_MODE !== "business") {
+    throw new Error('NEWCO_DEPOSIT_WINDOW_MODE must be "calendar" or "business"');
+  }
+  const WINDOW_DAYS = Number(process.env.NEWCO_DEPOSIT_WINDOW_DAYS ?? 7);
+  if (!Number.isInteger(WINDOW_DAYS) || WINDOW_DAYS < 0) {
+    throw new Error("NEWCO_DEPOSIT_WINDOW_DAYS must be a non-negative integer");
+  }
+  console.log(`Deposit window: ${WINDOW_DAYS} ${WINDOW_MODE} day(s)`);
+  const reconciliationLedger = await ledgerFactory.deploy(
+    deployer.address,
+    CUSTODIAN_ADDRESS,
+    WINDOW_MODE === "business" ? 1 : 0,
+    WINDOW_DAYS
+  );
   await reconciliationLedger.waitForDeployment();
   console.log(`ReconciliationLedger deployed at: ${await reconciliationLedger.getAddress()}`);
   console.log(`  payrollSystem: ${deployer.address}`);
