@@ -19,10 +19,35 @@ contract ReconciliationLedger {
     address public payrollSystem;
     address public custodian;
 
-    // DOL's 7-business-day safe harbor for timely deposit of participant
-    // contributions (29 CFR 2510.3-102). This constant is used only to
-    // FLAG a late-looking deposit for human review, never to block one.
-    uint256 public constant TIMELY_DEPOSIT_WINDOW_DAYS = 7;
+    // How the timely-deposit window is counted. Used only to FLAG a
+    // late-looking deposit for human review, never to block one.
+    //
+    // - CalendarDays: late if remittedAt > withheldAt + N * 24h (to the
+    //   second). N = 0 means any delay at all is flagged - the setting for
+    //   instant, every-day settlement once the industry supports it.
+    // - BusinessDays: N weekdays (Mon-Fri, by UTC date) after the date of
+    //   withholding; late if the remittance's UTC date is after that. Bank
+    //   holidays are NOT excluded - the chain has no trustworthy holiday
+    //   calendar without someone being given power to maintain one - so a
+    //   holiday inside the window makes the flag fire a day EARLY. That
+    //   errs toward an extra human review, never toward a missed late
+    //   deposit.
+    //
+    // Which mode and length a plan should use (e.g. DOL's 7-business-day
+    // small-plan safe harbor under 29 CFR 2510.3-102(a)(2), which only
+    // covers plans with fewer than 100 participants) is a compliance
+    // decision made at deployment, not by this contract.
+    enum DepositWindowMode {
+        CalendarDays, // 0
+        BusinessDays // 1
+    }
+
+    // Fixed at deployment. Changing them means deploying a new ledger:
+    // there is deliberately no admin who can alter the rules mid-stream.
+    DepositWindowMode public immutable DEPOSIT_WINDOW_MODE;
+    uint256 public immutable TIMELY_DEPOSIT_WINDOW_DAYS;
+    // Bounds the business-day loop in depositDeadline().
+    uint256 public constant MAX_DEPOSIT_WINDOW_DAYS = 60;
 
     enum Status {
         NoRecord, // 0 - neither a contribution nor a remittance recorded yet
@@ -72,11 +97,41 @@ contract ReconciliationLedger {
         _;
     }
 
-    constructor(address _payrollSystem, address _custodian) {
+    constructor(
+        address _payrollSystem,
+        address _custodian,
+        DepositWindowMode _windowMode,
+        uint256 _windowDays
+    ) {
         require(_payrollSystem != address(0), "payrollSystem cannot be zero address");
         require(_custodian != address(0), "custodian cannot be zero address");
+        require(_windowDays <= MAX_DEPOSIT_WINDOW_DAYS, "deposit window too long");
         payrollSystem = _payrollSystem;
         custodian = _custodian;
+        DEPOSIT_WINDOW_MODE = _windowMode;
+        TIMELY_DEPOSIT_WINDOW_DAYS = _windowDays;
+    }
+
+    /// @notice The last unix second a deposit for a contribution withheld
+    /// at `withheldAt` still counts as timely under this ledger's settings.
+    /// Remittances after this are flagged LateDeposit (never blocked).
+    function depositDeadline(uint64 withheldAt) public view returns (uint256) {
+        if (DEPOSIT_WINDOW_MODE == DepositWindowMode.CalendarDays) {
+            return uint256(withheldAt) + TIMELY_DEPOSIT_WINDOW_DAYS * 1 days;
+        }
+        uint256 day = uint256(withheldAt) / 1 days;
+        for (uint256 i = 0; i < TIMELY_DEPOSIT_WINDOW_DAYS; i++) {
+            day++;
+            while (_isWeekend(day)) day++;
+        }
+        return (day + 1) * 1 days - 1; // end of that UTC day
+    }
+
+    /// @dev Day 0 of unix time (1970-01-01) was a Thursday. With Sunday = 0,
+    /// day-of-week = (day + 4) % 7.
+    function _isWeekend(uint256 day) internal pure returns (bool) {
+        uint256 dow = (day + 4) % 7;
+        return dow == 0 || dow == 6;
     }
 
     function _key(bytes32 employeeId, bytes32 payPeriod) internal pure returns (bytes32) {
@@ -147,9 +202,9 @@ contract ReconciliationLedger {
             return;
         }
 
-        uint256 windowSeconds = TIMELY_DEPOSIT_WINDOW_DAYS * 1 days;
-        if (uint256(r.remittedAt) > uint256(c.withheldAt) + windowSeconds) {
-            uint256 delaySeconds = uint256(r.remittedAt) - uint256(c.withheldAt) - windowSeconds;
+        uint256 deadline = depositDeadline(c.withheldAt);
+        if (uint256(r.remittedAt) > deadline) {
+            uint256 delaySeconds = uint256(r.remittedAt) - deadline;
             _reconciliationStatus[key] = Status.LateDeposit;
             emit ReconciliationLateDeposit(key, delaySeconds);
             return;
