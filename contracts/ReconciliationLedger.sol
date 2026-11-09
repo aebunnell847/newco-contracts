@@ -16,8 +16,20 @@ pragma solidity ^0.8.24;
 /// that reverts, withholds, or alters a recorded amount based on a
 /// mismatch - flag it and move on.
 contract ReconciliationLedger {
+    // The two writers of the ledger. Each role can hand ITS OWN address to
+    // a new one (key rotation, a new system, a cooperative change of
+    // provider) via a two-step propose/accept, so a typo can't hand the
+    // role to an address nobody controls. There is no admin: neither role
+    // can touch the other's address, and nobody can change the deposit-
+    // window rules. A lost or stolen key, or an outgoing party that won't
+    // cooperate, still means deploying a new ledger.
+    //
+    // The two roles must always be different addresses: one party able to
+    // record both sides could manufacture a "Matched" reconciliation.
     address public payrollSystem;
     address public custodian;
+    address public pendingPayrollSystem;
+    address public pendingCustodian;
 
     // How the timely-deposit window is counted. Used only to FLAG a
     // late-looking deposit for human review, never to block one.
@@ -86,6 +98,10 @@ contract ReconciliationLedger {
     event ReconciliationMatched(bytes32 indexed key);
     event ReconciliationAmountMismatch(bytes32 indexed key, uint256 contributionAmountCents, uint256 remittanceAmountCents);
     event ReconciliationLateDeposit(bytes32 indexed key, uint256 delaySeconds);
+    event PayrollSystemHandoffProposed(address indexed current, address indexed proposed);
+    event PayrollSystemHandedOff(address indexed previous, address indexed next);
+    event CustodianHandoffProposed(address indexed current, address indexed proposed);
+    event CustodianHandedOff(address indexed previous, address indexed next);
 
     modifier onlyPayroll() {
         require(msg.sender == payrollSystem, "caller is not the registered payroll system");
@@ -105,11 +121,55 @@ contract ReconciliationLedger {
     ) {
         require(_payrollSystem != address(0), "payrollSystem cannot be zero address");
         require(_custodian != address(0), "custodian cannot be zero address");
+        require(_payrollSystem != _custodian, "payrollSystem and custodian must be different addresses");
         require(_windowDays <= MAX_DEPOSIT_WINDOW_DAYS, "deposit window too long");
         payrollSystem = _payrollSystem;
         custodian = _custodian;
         DEPOSIT_WINDOW_MODE = _windowMode;
         TIMELY_DEPOSIT_WINDOW_DAYS = _windowDays;
+    }
+
+    /// @notice The current payroll system proposes `next` as its successor.
+    /// Takes effect only when `next` calls acceptPayrollSystem(). Proposing
+    /// address(0) cancels a pending proposal; a new proposal replaces it.
+    function proposePayrollSystem(address next) external onlyPayroll {
+        require(next != payrollSystem, "already the payroll system");
+        require(next != custodian, "payrollSystem and custodian must be different addresses");
+        pendingPayrollSystem = next;
+        emit PayrollSystemHandoffProposed(payrollSystem, next);
+    }
+
+    /// @notice The proposed successor takes over the payroll role.
+    function acceptPayrollSystem() external {
+        require(pendingPayrollSystem != address(0), "no payroll handoff pending");
+        require(msg.sender == pendingPayrollSystem, "caller is not the proposed payroll system");
+        // Re-checked here: the custodian may have changed since the proposal.
+        require(msg.sender != custodian, "payrollSystem and custodian must be different addresses");
+        address previous = payrollSystem;
+        payrollSystem = msg.sender;
+        pendingPayrollSystem = address(0);
+        emit PayrollSystemHandedOff(previous, msg.sender);
+    }
+
+    /// @notice The current custodian proposes `next` as its successor.
+    /// Takes effect only when `next` calls acceptCustodian(). Proposing
+    /// address(0) cancels a pending proposal; a new proposal replaces it.
+    function proposeCustodian(address next) external onlyCustodian {
+        require(next != custodian, "already the custodian");
+        require(next != payrollSystem, "payrollSystem and custodian must be different addresses");
+        pendingCustodian = next;
+        emit CustodianHandoffProposed(custodian, next);
+    }
+
+    /// @notice The proposed successor takes over the custodian role.
+    function acceptCustodian() external {
+        require(pendingCustodian != address(0), "no custodian handoff pending");
+        require(msg.sender == pendingCustodian, "caller is not the proposed custodian");
+        require(msg.sender != payrollSystem, "payrollSystem and custodian must be different addresses");
+        address previous = custodian;
+        custodian = msg.sender;
+        pendingCustodian = address(0);
+        emit CustodianHandedOff(previous, msg.sender);
     }
 
     /// @notice The last unix second a deposit for a contribution withheld

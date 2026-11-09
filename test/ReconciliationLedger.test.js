@@ -245,6 +245,112 @@ describe("ReconciliationLedger deposit window settings", function () {
   });
 });
 
+describe("ReconciliationLedger role handoff", function () {
+  // Well-known local Hardhat accounts #3 and #4 (public test keys).
+  const NEXT_KEYS = [
+    "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
+    "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
+  ];
+  let provider, payroll, custodian, outsider, nextPayroll, nextCustodian, c;
+  const employeeId = ethers.keccak256(ethers.toUtf8Bytes("emp-handoff"));
+  let n = 0;
+  const newPeriod = () => ethers.keccak256(ethers.toUtf8Bytes("handoff-" + n++));
+
+  beforeEach(async function () {
+    provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545", undefined, { cacheTimeout: -1 });
+    [payroll, custodian, outsider] = DEFAULT_TEST_KEYS.map((k) => new ethers.Wallet(k, provider));
+    [nextPayroll, nextCustodian] = NEXT_KEYS.map((k) => new ethers.Wallet(k, provider));
+    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, payroll);
+    c = await factory.deploy(payroll.address, custodian.address, CALENDAR, 7);
+    await c.waitForDeployment();
+  });
+
+  const send = async (p) => (await p).wait();
+
+  it("refuses to deploy with the same address in both roles", async function () {
+    const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, payroll);
+    await expectRevert(factory.deploy(payroll.address, payroll.address, CALENDAR, 7));
+  });
+
+  it("payroll hands off in two steps; only then does the new address take over", async function () {
+    await send(c.proposePayrollSystem(nextPayroll.address));
+    expect(await c.payrollSystem()).to.equal(payroll.address); // not yet
+    expect(await c.pendingPayrollSystem()).to.equal(nextPayroll.address);
+
+    const receipt = await send(c.connect(nextPayroll).acceptPayrollSystem());
+    const ev = receipt.logs.map((l) => c.interface.parseLog(l)).find((e) => e.name === "PayrollSystemHandedOff");
+    expect(ev.args.previous).to.equal(payroll.address);
+    expect(ev.args.next).to.equal(nextPayroll.address);
+    expect(await c.payrollSystem()).to.equal(nextPayroll.address);
+    expect(await c.pendingPayrollSystem()).to.equal(ethers.ZeroAddress);
+
+    const now = (await provider.getBlock("latest")).timestamp;
+    await expectRevert(c.connect(payroll).recordContribution(employeeId, newPeriod(), 1, now)); // old key locked out
+    await send(c.connect(nextPayroll).recordContribution(employeeId, newPeriod(), 1, now)); // new key works
+  });
+
+  it("custodian hands off in two steps; only then does the new address take over", async function () {
+    await send(c.connect(custodian).proposeCustodian(nextCustodian.address));
+    expect(await c.custodian()).to.equal(custodian.address);
+    await send(c.connect(nextCustodian).acceptCustodian());
+    expect(await c.custodian()).to.equal(nextCustodian.address);
+
+    const now = (await provider.getBlock("latest")).timestamp;
+    await expectRevert(c.connect(custodian).recordRemittance(employeeId, newPeriod(), 1, now));
+    await send(c.connect(nextCustodian).recordRemittance(employeeId, newPeriod(), 1, now));
+  });
+
+  it("only the current holder of a role can propose its successor - no one can touch the other role", async function () {
+    await expectRevert(c.connect(outsider).proposePayrollSystem(outsider.address));
+    await expectRevert(c.connect(custodian).proposePayrollSystem(nextPayroll.address)); // custodian can't move payroll
+    await expectRevert(c.connect(outsider).proposeCustodian(outsider.address));
+    await expectRevert(c.connect(payroll).proposeCustodian(nextCustodian.address)); // payroll can't move custodian
+  });
+
+  it("only the proposed address can accept, and only while a handoff is pending", async function () {
+    await expectRevert(c.connect(nextPayroll).acceptPayrollSystem()); // nothing pending
+    await send(c.proposePayrollSystem(nextPayroll.address));
+    await expectRevert(c.connect(outsider).acceptPayrollSystem());
+    await expectRevert(c.connect(payroll).acceptPayrollSystem());
+  });
+
+  it("a proposal can be replaced or cancelled before it is accepted", async function () {
+    await send(c.proposePayrollSystem(outsider.address));
+    await send(c.proposePayrollSystem(nextPayroll.address)); // replace
+    await expectRevert(c.connect(outsider).acceptPayrollSystem());
+    await send(c.proposePayrollSystem(ethers.ZeroAddress)); // cancel
+    await expectRevert(c.connect(nextPayroll).acceptPayrollSystem());
+    expect(await c.payrollSystem()).to.equal(payroll.address);
+  });
+
+  it("never lets one address hold both roles, even if the other role moved after the proposal", async function () {
+    await expectRevert(c.proposePayrollSystem(custodian.address)); // direct attempt
+    await expectRevert(c.proposePayrollSystem(payroll.address)); // no-op proposal refused too
+
+    // Payroll proposes X; meanwhile the custodian hands off to X; X then
+    // tries to also accept payroll. Must be refused.
+    await send(c.proposePayrollSystem(nextCustodian.address));
+    await send(c.connect(custodian).proposeCustodian(nextCustodian.address));
+    await send(c.connect(nextCustodian).acceptCustodian());
+    await expectRevert(c.connect(nextCustodian).acceptPayrollSystem());
+    expect(await c.payrollSystem()).to.equal(payroll.address);
+  });
+
+  it("entries recorded before a handoff stay intact and reconcile across it", async function () {
+    const period = newPeriod();
+    const withheldAt = (await provider.getBlock("latest")).timestamp;
+    await send(c.recordContribution(employeeId, period, 5_000, withheldAt)); // old payroll
+
+    await send(c.proposePayrollSystem(nextPayroll.address));
+    await send(c.connect(nextPayroll).acceptPayrollSystem());
+    await send(c.connect(custodian).proposeCustodian(nextCustodian.address));
+    await send(c.connect(nextCustodian).acceptCustodian());
+
+    await send(c.connect(nextCustodian).recordRemittance(employeeId, period, 5_000, withheldAt + 3600)); // new custodian
+    expect(await c.status(employeeId, period)).to.equal(3n); // Matched
+  });
+});
+
 // We're running tests via plain mocha (not `npx hardhat test`), so
 // Hardhat's chai-matchers plugin (which would give us `.to.be.reverted`)
 // isn't loaded. This is a minimal stand-in: assert the promise rejects.
