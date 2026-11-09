@@ -31,7 +31,7 @@ contracts implement).
 
 ## Natural next steps
 
-- Add Slither/Mythril static analysis to CI.
+- Consider adding Mythril alongside the Slither gate already in CI.
 - Deploy to a real public testnet (Base Sepolia) - see
   `docs/DEPLOYING_TO_TESTNET.md` for exactly what's needed and why it
   can't be done from inside an agent sandbox.
