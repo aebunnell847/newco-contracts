@@ -50,6 +50,18 @@ Every ledger entry stores two times: the one the caller claims
 caller can't choose. The flag logic is unchanged; the second time
 just makes a backdated claim visible to an auditor.
 
+## CI
+
+Every push and pull request runs three checks
+(`.github/workflows/ci.yml`):
+
+- the full test suite against a fresh local Hardhat node;
+- a drift check that fails if the committed `artifacts-custom/` doesn't
+  match a fresh `node compile.js` (newco-payroll vendors these ABIs and
+  checks its copy against this repo's `master`);
+- Slither static analysis (slither 0.11.6, solc 0.8.38), failing on any
+  medium or high finding.
+
 ## Deploying
 
 ```
@@ -138,6 +150,8 @@ change the deposit-window rules. What this doesn't cover:
 
 ## What's not here yet
 
-Static analysis (Slither/Mythril) in CI, a mainnet deployment plan, and
-the SD-JWT VC standards-bridge layer described in Section 2 of the
-research corpus - all listed as open next steps there.
+A public testnet deployment (see `docs/DEPLOYING_TO_TESTNET.md`; it
+needs a funded deployer key, so it's run by a person, not CI), a mainnet
+deployment plan, Mythril symbolic analysis alongside Slither, and the
+SD-JWT VC standards-bridge layer described in Section 2 of the research
+corpus - all listed as open next steps there.
