@@ -38,7 +38,7 @@ npm run node        # in one terminal - starts a local chain, leave it running
 npm test            # in another terminal - compiles + runs all tests
 ```
 
-23 tests across both contracts: grants, revocation, expiry, access
+31 tests across both contracts: grants, revocation, expiry, access
 control on who can call what, and all three reconciliation outcomes
 (Matched, AmountMismatch, LateDeposit) under both deposit-window modes -
 including an explicit assertion
@@ -88,6 +88,38 @@ To deploy to a real public testnet instead of your own machine, see
 [`docs/DEPLOYING_TO_TESTNET.md`](docs/DEPLOYING_TO_TESTNET.md) - it needs
 two things only you can provide (an RPC endpoint and a funded testnet
 wallet), spelled out there.
+
+## Who can write the ledger, and handing a role off
+
+`ReconciliationLedger` has two writers: the **payroll system** (records
+contributions) and the **custodian** (records remittances). They must
+always be different addresses; the contract refuses to let one address
+hold both, since that party could record both sides and manufacture a
+`Matched` result.
+
+Each role can hand **its own** address to a new one, for a key rotation,
+a new system, or a cooperative change of provider:
+
+1. The current holder calls `proposePayrollSystem(next)` /
+   `proposeCustodian(next)`.
+2. `next` calls `acceptPayrollSystem()` / `acceptCustodian()` from its
+   own address.
+
+Two steps mean a mistyped address can't take the role: an address
+nobody controls can never accept. A pending proposal can be replaced,
+or cancelled by proposing the zero address. Every step emits an event.
+Entries recorded before a handoff stay exactly as they were.
+
+There is **no admin**. Neither role can move the other, and nobody can
+change the deposit-window rules. What this doesn't cover:
+
+- **A lost key, or an outgoing party that won't cooperate.** Only the
+  current holder can start a handoff, so recovering means deploying a
+  new ledger.
+- **A stolen key.** The thief can hand the role to themselves and lock
+  the real party out. That's no worse than what a stolen key already
+  allows (writing false entries); recovery is again a new ledger. Keep
+  role keys in hardware or multi-signature wallets.
 
 ## What's not here yet
 
